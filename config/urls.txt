@@ -1,0 +1,6 @@
+# DoomPrompting URLs - one per line
+# Lines starting with # are comments
+
+https://www.youtube.com
+https://www.instagram.com
+https://www.tiktok.com
