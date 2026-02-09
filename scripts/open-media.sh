@@ -1,9 +1,10 @@
 #!/bin/bash
-# Opens URLs in a new Chrome window when Claude prompt starts
+# Opens URLs in separate Chrome windows tiled in 4 corners
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_DIR="$SCRIPT_DIR/../config"
 TEMP_FILE="/tmp/doomprompting-window"
+START_FILE="/tmp/doomprompting-start"
 
 # Check if enabled
 if [ ! -f "$CONFIG_DIR/enabled" ]; then
@@ -28,31 +29,48 @@ if [ ${#urls[@]} -eq 0 ]; then
   exit 0
 fi
 
-# Build AppleScript to open new window with all URLs
-first_url="${urls[0]}"
-remaining_urls=("${urls[@]:1}")
+# Get screen size and calculate quadrants
+read screen_width screen_height < <(osascript -e 'tell application "Finder" to get bounds of window of desktop' | awk -F', ' '{print $3, $4}')
 
-applescript='
+half_w=$((screen_width / 2))
+half_h=$((screen_height / 2))
+
+# Positions: top-left, top-right, bottom-left, bottom-right
+positions=(
+  "0 0 $half_w $half_h"
+  "$half_w 0 $screen_width $half_h"
+  "0 $half_h $half_w $screen_height"
+  "$half_w $half_h $screen_width $screen_height"
+)
+
+# Clear old window IDs
+> "$TEMP_FILE"
+
+# Open each URL in its own window, positioned in a corner
+for i in "${!urls[@]}"; do
+  url="${urls[$i]}"
+  pos_idx=$((i % 4))
+  read x1 y1 x2 y2 <<< "${positions[$pos_idx]}"
+
+  window_id=$(osascript <<EOF
 tell application "Google Chrome"
   set newWindow to make new window
-  set URL of active tab of newWindow to "'"$first_url"'"
-'
+  set URL of active tab of newWindow to "$url"
+  set bounds of newWindow to {$x1, $y1, $x2, $y2}
+  return id of newWindow
+end tell
+EOF
+  )
 
-for url in "${remaining_urls[@]}"; do
-  applescript+='
-  tell newWindow to make new tab with properties {URL:"'"$url"'"}'
+  if [ -n "$window_id" ]; then
+    echo "$window_id" >> "$TEMP_FILE"
+  fi
 done
 
-applescript+='
-  set windowId to id of newWindow
-  return windowId
-end tell
-'
+# Activate Chrome
+osascript -e 'tell application "Google Chrome" to activate' 2>/dev/null
 
-# Run AppleScript and capture window ID
-window_id=$(osascript -e "$applescript" 2>/dev/null)
-
-# Store window ID for later cleanup
-if [ -n "$window_id" ]; then
-  echo "$window_id" > "$TEMP_FILE"
+# Record start time
+if [ -s "$TEMP_FILE" ]; then
+  date +%s > "$START_FILE"
 fi

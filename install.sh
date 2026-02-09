@@ -13,10 +13,24 @@ mkdir -p "$HOME/.claude"
 # Create enabled file (default on)
 touch "$SCRIPT_DIR/config/enabled"
 
+# Create sessions log if not exists
+touch "$SCRIPT_DIR/config/sessions.log"
+
 # Make scripts executable
 chmod +x "$SCRIPT_DIR/scripts/"*.sh
+chmod +x "$SCRIPT_DIR/scripts/doom"
+
+# Create symlink for doom CLI
+if [ -w "/usr/local/bin" ]; then
+  ln -sf "$SCRIPT_DIR/scripts/doom" /usr/local/bin/doom
+  echo "Symlinked: doom -> /usr/local/bin/doom"
+else
+  echo "Note: Add $SCRIPT_DIR/scripts to PATH or run:"
+  echo "  sudo ln -s $SCRIPT_DIR/scripts/doom /usr/local/bin/doom"
+fi
 
 # Define the hooks to add
+# Open on submit; close only on Stop (not PreToolUse, so the window stays open until you stop the response)
 HOOKS_JSON=$(cat <<EOF
 {
   "hooks": {
@@ -71,5 +85,10 @@ fi
 echo "Done! Restart Claude Code session to activate."
 echo ""
 echo "Commands:"
-echo "  Toggle: $SCRIPT_DIR/scripts/toggle.sh"
-echo "  Edit URLs: $SCRIPT_DIR/config/urls.txt"
+echo "  doom list       - Show URLs"
+echo "  doom add <url>  - Add URL"
+echo "  doom disable N  - Disable URL #N"
+echo "  doom enable N   - Enable URL #N"
+echo "  doom toggle     - Global on/off"
+echo "  doom log        - Session history"
+echo "  doom stats      - Total time summary"

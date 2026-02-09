@@ -1,0 +1,247 @@
+#!/bin/bash
+# DoomPrompting CLI
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONFIG_DIR="$SCRIPT_DIR/../config"
+URLS_FILE="$CONFIG_DIR/urls.txt"
+SESSIONS_LOG="$CONFIG_DIR/sessions.log"
+
+usage() {
+  echo "Usage: doom <command> [args]"
+  echo ""
+  echo "Commands:"
+  echo "  add <url>      Add URL to list"
+  echo "  disable <n>    Disable URL by index"
+  echo "  enable <n>     Enable URL by index"
+  echo "  list           List URLs with status"
+  echo "  toggle         Global on/off"
+  echo "  log            Show session time logs"
+  echo "  stats          Total time summary"
+  exit 1
+}
+
+# Get URLs (all lines, skip header comments at top)
+get_urls() {
+  local in_header=true
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Skip leading header comments
+    if $in_header && [[ "$line" == \#* && ! "$line" =~ ^#https?:// ]]; then
+      continue
+    fi
+    in_header=false
+    # Skip empty lines
+    [[ -z "$(echo "$line" | xargs)" ]] && continue
+    echo "$line"
+  done < "$URLS_FILE"
+}
+
+cmd_list() {
+  if [ ! -f "$URLS_FILE" ]; then
+    echo "No URLs file found"
+    exit 1
+  fi
+
+  echo "DoomPrompting URLs:"
+  echo ""
+
+  local idx=1
+  while IFS= read -r line; do
+    line_trimmed=$(echo "$line" | xargs)
+    [[ -z "$line_trimmed" ]] && continue
+
+    if [[ "$line_trimmed" == \#https* ]] || [[ "$line_trimmed" == \#http* ]]; then
+      # Disabled URL
+      url="${line_trimmed#\#}"
+      printf "%2d. [✗] %s\n" "$idx" "$url"
+    else
+      # Enabled URL
+      printf "%2d. [✓] %s\n" "$idx" "$line_trimmed"
+    fi
+    ((idx++))
+  done < <(get_urls)
+
+  echo ""
+  if [ -f "$CONFIG_DIR/enabled" ]; then
+    echo "Status: ON"
+  else
+    echo "Status: OFF"
+  fi
+}
+
+cmd_add() {
+  local url="$1"
+  if [ -z "$url" ]; then
+    echo "Usage: doom add <url>"
+    exit 1
+  fi
+
+  # Validate URL format
+  if [[ ! "$url" =~ ^https?:// ]]; then
+    echo "Error: URL must start with http:// or https://"
+    exit 1
+  fi
+
+  echo "$url" >> "$URLS_FILE"
+  echo "Added: $url"
+}
+
+cmd_disable() {
+  local target_idx="$1"
+  if [ -z "$target_idx" ]; then
+    echo "Usage: doom disable <index>"
+    exit 1
+  fi
+
+  local idx=1
+  local temp_file=$(mktemp)
+  local found=false
+  local in_header=true
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Keep header comments as-is
+    if $in_header && [[ "$line" == \#* && ! "$line" =~ ^#https?:// ]]; then
+      echo "$line" >> "$temp_file"
+      continue
+    fi
+    in_header=false
+
+    # Skip empty lines but keep them
+    if [[ -z "$(echo "$line" | xargs)" ]]; then
+      echo "$line" >> "$temp_file"
+      continue
+    fi
+
+    if [ "$idx" -eq "$target_idx" ]; then
+      found=true
+      line_trimmed=$(echo "$line" | xargs)
+      if [[ "$line_trimmed" == \#* ]]; then
+        echo "URL $target_idx already disabled"
+        rm "$temp_file"
+        exit 1
+      fi
+      echo "#$line_trimmed" >> "$temp_file"
+      echo "Disabled: $line_trimmed"
+    else
+      echo "$line" >> "$temp_file"
+    fi
+    ((idx++))
+  done < "$URLS_FILE"
+
+  if ! $found; then
+    echo "Error: Index $target_idx not found"
+    rm "$temp_file"
+    exit 1
+  fi
+
+  mv "$temp_file" "$URLS_FILE"
+}
+
+cmd_enable() {
+  local target_idx="$1"
+  if [ -z "$target_idx" ]; then
+    echo "Usage: doom enable <index>"
+    exit 1
+  fi
+
+  local idx=1
+  local temp_file=$(mktemp)
+  local found=false
+  local in_header=true
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Keep header comments as-is
+    if $in_header && [[ "$line" == \#* && ! "$line" =~ ^#https?:// ]]; then
+      echo "$line" >> "$temp_file"
+      continue
+    fi
+    in_header=false
+
+    # Skip empty lines but keep them
+    if [[ -z "$(echo "$line" | xargs)" ]]; then
+      echo "$line" >> "$temp_file"
+      continue
+    fi
+
+    if [ "$idx" -eq "$target_idx" ]; then
+      found=true
+      line_trimmed=$(echo "$line" | xargs)
+      if [[ "$line_trimmed" != \#* ]]; then
+        echo "URL $target_idx already enabled"
+        rm "$temp_file"
+        exit 1
+      fi
+      url="${line_trimmed#\#}"
+      echo "$url" >> "$temp_file"
+      echo "Enabled: $url"
+    else
+      echo "$line" >> "$temp_file"
+    fi
+    ((idx++))
+  done < "$URLS_FILE"
+
+  if ! $found; then
+    echo "Error: Index $target_idx not found"
+    rm "$temp_file"
+    exit 1
+  fi
+
+  mv "$temp_file" "$URLS_FILE"
+}
+
+cmd_toggle() {
+  "$SCRIPT_DIR/toggle.sh"
+}
+
+cmd_log() {
+  if [ ! -f "$SESSIONS_LOG" ]; then
+    echo "No sessions logged yet"
+    exit 0
+  fi
+
+  echo "Session Log:"
+  echo ""
+  tail -20 "$SESSIONS_LOG"
+}
+
+cmd_stats() {
+  if [ ! -f "$SESSIONS_LOG" ]; then
+    echo "No sessions logged yet"
+    exit 0
+  fi
+
+  local total_seconds=0
+  local count=0
+
+  while IFS= read -r line; do
+    if [[ "$line" =~ duration=([0-9]+)s ]]; then
+      total_seconds=$((total_seconds + BASH_REMATCH[1]))
+      ((count++))
+    fi
+  done < "$SESSIONS_LOG"
+
+  local hours=$((total_seconds / 3600))
+  local mins=$(((total_seconds % 3600) / 60))
+  local secs=$((total_seconds % 60))
+
+  echo "DoomPrompting Stats:"
+  echo ""
+  echo "Total sessions: $count"
+  printf "Total time: %dh %dm %ds\n" "$hours" "$mins" "$secs"
+
+  if [ "$count" -gt 0 ]; then
+    local avg=$((total_seconds / count))
+    printf "Avg per session: %ds\n" "$avg"
+  fi
+}
+
+# Main
+case "${1:-}" in
+  add)     cmd_add "$2" ;;
+  disable) cmd_disable "$2" ;;
+  enable)  cmd_enable "$2" ;;
+  list)    cmd_list ;;
+  toggle)  cmd_toggle ;;
+  log)     cmd_log ;;
+  stats)   cmd_stats ;;
+  *)       usage ;;
+esac
